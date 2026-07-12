@@ -23,7 +23,7 @@ from .elevenlabs import (
 )
 from .hmac_auth import SIGNATURE_HEADER, TIMESTAMP_HEADER, is_fresh, sign, verify
 from .log import Logger, logger
-from .metrics import render_metrics
+from .metrics import render_metrics, reset_metrics
 from .protocol import parse_worker_message, pcm16k_bytes_to_ms
 from .server import BridgeServer, ReplayGuard, authorize_upgrade, call_id_from_path, start_server
 from .session import CallSession, WorkerPort
@@ -62,6 +62,7 @@ __all__ = [
     "parse_worker_message",
     "pcm16k_bytes_to_ms",
     "render_metrics",
+    "reset_metrics",
     "sign",
     "start_server",
     "synthesize_goodbye",

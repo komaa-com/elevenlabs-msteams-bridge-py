@@ -149,15 +149,23 @@ class _AioWorkerPort:
         self._queue.put_nowait(payload)
 
     def close(self, code: int, reason: str) -> None:
-        self._queue.put_nowait(None)  # writer closes after flushing what's queued
+        self._queue.put_nowait(None)  # the writer exits after flushing what's queued
 
-        async def _force() -> None:
+        async def _close_after_flush() -> None:
+            # WAIT for the writer to drain before closing the socket - closing
+            # concurrently could drop the just-queued session.end frame, which
+            # is exactly the frame the graceful paths care about. Bounded so a
+            # stalled socket cannot hold the close open.
+            try:
+                await asyncio.wait_for(asyncio.shield(self._writer), timeout=2.0)
+            except (asyncio.TimeoutError, TimeoutError, asyncio.CancelledError, Exception):
+                pass
             try:
                 await self._ws.close(code=code, message=reason.encode("utf-8")[:100])
             except Exception:
                 pass
 
-        asyncio.ensure_future(_force())
+        asyncio.ensure_future(_close_after_flush())
 
     async def _drain(self) -> None:
         while True:
@@ -173,8 +181,19 @@ class _AioWorkerPort:
                 return  # socket died; the read loop tears the session down
 
     def stop_writer(self) -> None:
-        if not self._writer.done():
-            self._writer.cancel()
+        # Graceful: let the writer flush what is queued (session.end from the
+        # teardown path) and exit on the sentinel; only cancel if it is somehow
+        # still running after a bounded window.
+        self._queue.put_nowait(None)
+        if self._writer.done():
+            return
+        writer = self._writer
+
+        def _cancel_if_stuck() -> None:
+            if not writer.done():
+                writer.cancel()
+
+        asyncio.get_running_loop().call_later(3.0, _cancel_if_stuck)
 
 
 class BridgeServer:

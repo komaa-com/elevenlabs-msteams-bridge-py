@@ -28,6 +28,11 @@ def metric_dec(name: str) -> None:
     metric_inc(name, -1)
 
 
+def reset_metrics() -> None:
+    """Zero every counter. For test isolation only - never call in production."""
+    _counts.clear()
+
+
 def render_metrics() -> str:
     lines: list[str] = []
     for name, (help_text, mtype) in _META.items():

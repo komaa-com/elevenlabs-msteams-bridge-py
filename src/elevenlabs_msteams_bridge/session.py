@@ -148,7 +148,7 @@ class CallSession:
         self._last_worker_activity_ms = _now_ms()
         idle_ms = cfg.worker_idle_timeout_ms if cfg.worker_idle_timeout_ms > 0 else DEFAULT_WORKER_IDLE_TIMEOUT_MS
         self._idle_ms = idle_ms
-        self._idle_task = asyncio.create_task(self._idle_watchdog(max(0.02, min(idle_ms / 3000, 30.0))))
+        self._idle_task = asyncio.create_task(self._idle_watchdog(max(0.02, min(idle_ms / 6000, 15.0))))
 
     # ---- lifecycle wiring (called by the server's read loop) ----
 
@@ -660,9 +660,10 @@ class CallSession:
             "payloadBase64": base64_pcm,
         }
         self._out_seq += 1
-        # advance the timeline by the actual PCM duration (base64 -> bytes -> ms)
-        pcm_bytes = (len(base64_pcm) * 3) // 4 - base64_pcm.count("=", -2)
-        self._out_timestamp_ms += pcm16k_bytes_to_ms(pcm_bytes)
+        # advance the timeline by the actual PCM duration - exact decoded length
+        # (frames are <=1 KB, so the decode is cheap and is correct for unpadded
+        # base64 where arithmetic on the string length drifts)
+        self._out_timestamp_ms += pcm16k_bytes_to_ms(len(base64.b64decode(base64_pcm)))
         metric_inc("bridge_frames_to_worker_total")
         self._send_to_worker(frame)
 
