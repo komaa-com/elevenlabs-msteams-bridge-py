@@ -124,6 +124,10 @@ class _GuardedResolver(aiohttp_abc.AbstractResolver):
         results = []
         for a in addrs:
             fam = socket.AF_INET6 if ":" in a else socket.AF_INET
+            # honor the family aiohttp asked for (AF_UNSPEC = both): returning
+            # the wrong family breaks connection setup on dual-stack hosts
+            if family not in (socket.AF_UNSPEC, fam):
+                continue
             results.append(
                 {
                     "hostname": host,
@@ -134,6 +138,8 @@ class _GuardedResolver(aiohttp_abc.AbstractResolver):
                     "flags": socket.AI_NUMERICHOST,
                 }
             )
+        if not results:
+            raise OSError(f"{host} has no addresses for the requested address family")
         return results
 
     async def close(self) -> None:  # pragma: no cover - nothing to release

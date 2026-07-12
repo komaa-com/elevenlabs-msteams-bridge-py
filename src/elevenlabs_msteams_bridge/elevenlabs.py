@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any, Awaitable, Callable, Protocol
 from urllib.parse import quote, urlencode
 
@@ -29,6 +30,15 @@ EL_REST_TIMEOUT_MS = 10_000
 # Hard time bound on the goodbye-TTS request so a hung endpoint can't hold the
 # governor's mute/goodbye open (the call's hard teardown deadline still fires).
 GOODBYE_TTS_TIMEOUT_MS = 10_000
+
+# EL-side liveness: the agent socket pings roughly every 10 s, so a minute of
+# total silence means the peer is gone without a close frame - end the call
+# instead of waiting for the worker-side idle watchdog.
+EL_RECEIVE_TIMEOUT_S = 60
+
+# Outbound (bridge->EL) send-buffer cap, mirroring the worker-side guard: a
+# stalled agent socket must not pile up unbounded caller-audio send tasks.
+MAX_EL_SEND_BUFFER_BYTES = 1 * 1024 * 1024
 
 _EXT_FOR_MIME = {
     "image/jpeg": "jpg",
@@ -178,6 +188,10 @@ class ElAgentSocket:
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._read_task: asyncio.Task | None = None
         self.conversation_id: str | None = None
+        # backpressure bookkeeping for the fire-and-forget send path
+        self._pending_send_bytes = 0
+        self._dropped_chunks = 0
+        self._last_drop_warn = 0.0
 
     @classmethod
     async def connect(cls, cfg: BridgeConfig, log: Logger, handlers: ElSessionHandlers) -> "ElAgentSocket":
@@ -205,7 +219,14 @@ class ElAgentSocket:
         # stalled TLS/upgrade handshake must not hang session.start forever.
         self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None))
         self._ws = await asyncio.wait_for(
-            self._session.ws_connect(signed_url, max_msg_size=16 * 1024 * 1024),
+            self._session.ws_connect(
+                signed_url,
+                max_msg_size=16 * 1024 * 1024,
+                # liveness: EL sends application-level pings ~10 s apart, so a
+                # minute of silence means a dead peer - surface it instead of
+                # relaying into the void until the worker idle watchdog fires
+                receive_timeout=EL_RECEIVE_TIMEOUT_S,
+            ),
             timeout=EL_REST_TIMEOUT_MS / 1000,
         )
 
@@ -229,7 +250,8 @@ class ElAgentSocket:
         close_code = 1000
         close_reason = ""
         try:
-            async for frame in ws:
+            while True:
+                frame = await ws.receive()
                 if frame.type == aiohttp.WSMsgType.TEXT:
                     try:
                         msg = json.loads(frame.data)
@@ -241,6 +263,7 @@ class ElAgentSocket:
                         continue
                     if msg["type"] == "conversation_initiation_metadata":
                         if not self._handle_init_metadata(msg):
+                            close_reason = "audio-format-mismatch"
                             break  # fatal format mismatch; close and end the call
                     try:
                         handlers.on_message(msg)
@@ -248,9 +271,19 @@ class ElAgentSocket:
                         # Never let a handler error escape the read loop - it
                         # would silently kill the relay for this call.
                         self._log.error(f"error handling EL {msg.get('type')}: {err}")
+                elif frame.type == aiohttp.WSMsgType.CLOSE:
+                    # capture the peer's close reason so the operator sees WHY
+                    close_code = frame.data or close_code
+                    close_reason = frame.extra or ""
+                    break
+                elif frame.type in (aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED):
+                    break
                 elif frame.type == aiohttp.WSMsgType.ERROR:
                     handlers.on_error(ws.exception() or RuntimeError("EL websocket error"))
                     break
+        except (asyncio.TimeoutError, TimeoutError):
+            close_reason = "receive-timeout"
+            handlers.on_error(RuntimeError(f"no EL message in {EL_RECEIVE_TIMEOUT_S}s (dead peer?)"))
         except Exception as err:  # transport-level failure
             handlers.on_error(err if isinstance(err, Exception) else RuntimeError(str(err)))
         finally:
@@ -283,24 +316,42 @@ class ElAgentSocket:
     def is_open(self) -> bool:
         return self._ws is not None and not self._ws.closed
 
-    def _send(self, obj: dict[str, Any]) -> None:
+    def _send(self, obj: dict[str, Any], droppable: bool = False) -> None:
         ws = self._ws
         if ws is None or ws.closed:
             return
+        payload = json.dumps(obj)
+        # Backpressure guard, mirroring the worker direction: if the EL socket
+        # stalls, fire-and-forget sends would pile up unbounded. Drop realtime
+        # audio above the cap; control messages (pong, tool results, init)
+        # always queue - they are tiny and semantically load-bearing.
+        if droppable and self._pending_send_bytes > MAX_EL_SEND_BUFFER_BYTES:
+            self._dropped_chunks += 1
+            now = time.monotonic()
+            if now - self._last_drop_warn >= 1:
+                self._log.warn(
+                    f"EL send backpressure: dropped {self._dropped_chunks} chunk(s) "
+                    f"(buffered {self._pending_send_bytes} bytes)"
+                )
+                self._last_drop_warn = now
+                self._dropped_chunks = 0
+            return
+        self._pending_send_bytes += len(payload)
         # fire-and-forget like the hot path requires; errors surface on the read loop
-        asyncio.ensure_future(self._send_safe(ws, json.dumps(obj)))
+        asyncio.ensure_future(self._send_safe(ws, payload))
 
-    @staticmethod
-    async def _send_safe(ws: aiohttp.ClientWebSocketResponse, payload: str) -> None:
+    async def _send_safe(self, ws: aiohttp.ClientWebSocketResponse, payload: str) -> None:
         try:
             await ws.send_str(payload)
         except Exception:
             pass  # socket died mid-send; the read loop reports the close
+        finally:
+            self._pending_send_bytes -= len(payload)
 
     def send_audio_chunk(self, base64_pcm: str) -> None:
         """Caller audio -> agent. Payload is base64 PCM16K, forwarded verbatim
         (no "type" field on this one)."""
-        self._send({"user_audio_chunk": base64_pcm})
+        self._send({"user_audio_chunk": base64_pcm}, droppable=True)
 
     def send_conversation_init(self, init: dict[str, Any]) -> None:
         self._send(init)

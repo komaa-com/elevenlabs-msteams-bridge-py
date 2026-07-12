@@ -2,6 +2,9 @@
 
 Bridge **Microsoft Teams voice/video calls** to an **ElevenLabs Agent**.
 
+> PyPI package: **`elevenlabs-msteams-bridge`** - the `-py` suffix is only in this repository's
+> name, to distinguish it from the [Node.js sibling repo](https://github.com/komaa-com/elevenlabs-msteams-bridge).
+
 This is the Python sibling of [`@komaa/elevenlabs-msteams-bridge`](https://www.npmjs.com/package/@komaa/elevenlabs-msteams-bridge)
 (Node.js) - same wire contract, same environment variables, drop-in interchangeable behind the same
 `.env` file. It terminates the StandIn media bridge wire protocol on one side and the ElevenLabs
@@ -103,6 +106,14 @@ Everything is environment variables; names are identical to the Node package.
 - `GET /{...}/{callId}` + WebSocket upgrade - the worker wire, HMAC-signed with
   `X-OpenClawTeamsBridge-Timestamp` / `X-OpenClawTeamsBridge-Signature` over
   `"{timestampMs}.{callId}"`.
+
+Notes for operators:
+
+- `/healthz` and `/metrics` are **unauthenticated** (only the WebSocket upgrade is HMAC-gated).
+  They expose no call content - just liveness and counters - but if you would rather not leak call
+  volumes, keep the port behind your ingress/tunnel rules.
+- One bridge process serves **one agent id** (`ELEVENLABS_AGENT_ID`). Run one process per agent if
+  you route multiple agents.
 
 ## Vision and recording
 

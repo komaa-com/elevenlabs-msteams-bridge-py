@@ -11,7 +11,7 @@ import asyncio
 import signal
 
 from elevenlabs_msteams_bridge import load_config, start_server
-from elevenlabs_msteams_bridge.cli import _load_dotenv
+from elevenlabs_msteams_bridge import load_dotenv
 
 
 async def describe(frame: dict, question: str) -> str:
@@ -35,5 +35,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    _load_dotenv()
+    load_dotenv()
     asyncio.run(main())

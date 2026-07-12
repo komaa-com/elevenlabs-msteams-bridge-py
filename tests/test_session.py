@@ -57,9 +57,13 @@ async def test_audio_buffered_until_agent_open_then_flushed():
     session, worker, agent, _ = make_session()
     session.handle_worker_message(start_msg())
     # session.start handling is async; frames sent before the connect resolves buffer
-    session.handle_worker_message(json.dumps({"type": "audio.frame", "seq": 1, "timestampMs": 0, "payloadBase64": "QUJD"}))
+    session.handle_worker_message(
+        json.dumps({"type": "audio.frame", "seq": 1, "timestampMs": 0, "payloadBase64": "QUJD"})
+    )
     await settle()
-    session.handle_worker_message(json.dumps({"type": "audio.frame", "seq": 2, "timestampMs": 20, "payloadBase64": "REVG"}))
+    session.handle_worker_message(
+        json.dumps({"type": "audio.frame", "seq": 2, "timestampMs": 20, "payloadBase64": "REVG"})
+    )
     assert agent.audio == ["QUJD", "REVG"]
     session.end_call("test-done")
 
@@ -286,7 +290,15 @@ async def test_unknown_video_source_ignored():
     await settle()
     session.handle_worker_message(
         json.dumps(
-            {"type": "video.frame", "source": "evil", "ts": 0, "width": 1, "height": 1, "mime": "image/jpeg", "dataBase64": ""}
+            {
+                "type": "video.frame",
+                "source": "evil",
+                "ts": 0,
+                "width": 1,
+                "height": 1,
+                "mime": "image/jpeg",
+                "dataBase64": "",
+            }
         )
     )
     assert session._latest_video_frame == {}
@@ -298,4 +310,103 @@ async def test_junk_frames_dropped():
     session.handle_worker_message("not json at all")
     session.handle_worker_message(json.dumps({"noType": True}))
     assert not session.closed
+    session.end_call("test-done")
+
+
+async def test_dtmf_requires_string_digit():
+    session, worker, agent, _ = make_session()
+    session.handle_worker_message(start_msg())
+    await settle()
+    before = len([m for k, m in agent.messages if k == "context"])
+    session.handle_worker_message(json.dumps({"type": "dtmf"}))  # no digit
+    session.handle_worker_message(json.dumps({"type": "dtmf", "digit": 42}))  # non-string
+    assert len([m for k, m in agent.messages if k == "context"]) == before
+    session.handle_worker_message(json.dumps({"type": "dtmf", "digit": "5"}))
+    contexts = [m for k, m in agent.messages if k == "context"]
+    assert any('"5"' in c for c in contexts)
+    session.end_call("test-done")
+
+
+async def test_show_image_reports_error_when_dropped_under_backpressure():
+    session, worker, agent, connector = make_session()
+    session.handle_worker_message(start_msg())
+    await settle()
+    worker.buffered = MAX_OUTBOUND_BUFFER_BYTES + 1
+    connector.handlers.on_message(
+        {
+            "type": "client_tool_call",
+            "client_tool_call": {
+                "tool_name": "show_image",
+                "tool_call_id": "t9",
+                "parameters": {"dataBase64": base64.b64encode(b"img").decode(), "mime": "image/png"},
+            },
+        }
+    )
+    await settle()
+    results = [m for k, m in agent.messages if k == "tool_result"]
+    # the agent must NOT be told the image was shown when the frame was dropped
+    assert results and results[-1][2] is True and "could not be delivered" in results[-1][1]
+    session.end_call("test-done")
+
+
+async def test_mute_latch_resets_after_tts_goodbye(monkeypatch):
+    import asyncio
+
+    import elevenlabs_msteams_bridge.session as session_mod
+
+    async def fake_tts(cfg, text):
+        return b"\x00" * 640  # 20 ms of PCM -> unmute ~270 ms later
+
+    monkeypatch.setattr(session_mod, "synthesize_goodbye", fake_tts)
+    cfg = make_config(el_tts_voice_id="voice-1")
+    worker = FakeWorkerPort()
+    agent = FakeAgentPort()
+
+    async def connector(cfg_, log, handlers):
+        connector.handlers = handlers  # type: ignore[attr-defined]
+        return agent
+
+    session = CallSession(cfg, worker, "call-1", connect_el=connector, vision=None)
+    session.handle_worker_message(start_msg())
+    await settle()
+    session.handle_worker_message(json.dumps({"type": "assistant.say", "text": "bye"}))
+    await settle()
+    assert session._mute_agent_audio  # muted while the goodbye plays
+    goodbye_frames = len(worker.of_type("audio.frame"))
+    assert goodbye_frames == 1  # 640 bytes -> one 20 ms frame
+    # agent audio during the goodbye is swallowed
+    pcm = base64.b64encode(b"\x00" * 640).decode()
+    connector.handlers.on_message({"type": "audio", "audio_event": {"audio_base_64": pcm, "event_id": 99}})
+    assert len(worker.of_type("audio.frame")) == goodbye_frames
+    # after playout + buffer the latch releases (worker failed to tear down)
+    await asyncio.sleep(0.4)
+    assert not session._mute_agent_audio
+    connector.handlers.on_message({"type": "audio", "audio_event": {"audio_base_64": pcm, "event_id": 100}})
+    assert len(worker.of_type("audio.frame")) == goodbye_frames + 1
+    session.end_call("test-done")
+
+
+async def test_look_path1_without_mime_reports_clear_error():
+    session, worker, agent, connector = make_session()
+    session.handle_worker_message(start_msg(recordingStatus="active"))
+    await settle()
+    session.handle_worker_message(
+        json.dumps(
+            {
+                "type": "video.frame",
+                "source": "camera",
+                "ts": 0,
+                "width": 1,
+                "height": 1,
+                "mime": None,
+                "dataBase64": base64.b64encode(b"x").decode(),
+            }
+        )
+    )
+    connector.handlers.on_message(
+        {"type": "client_tool_call", "client_tool_call": {"tool_name": "look", "tool_call_id": "t10"}}
+    )
+    await settle()
+    results = [m for k, m in agent.messages if k == "tool_result"]
+    assert results and results[-1][2] is True and "no mime" in results[-1][1]
     session.end_call("test-done")

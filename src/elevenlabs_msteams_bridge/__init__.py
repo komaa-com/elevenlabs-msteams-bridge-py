@@ -9,6 +9,7 @@ Typical embedding:
 Or run the CLI: `elevenlabs-msteams-bridge` (env-configured, see .env.example).
 """
 
+from .cli import load_dotenv
 from .config import BridgeConfig, load_config
 from .elevenlabs import (
     AgentPort,
@@ -55,6 +56,7 @@ __all__ = [
     "is_forbidden_ip",
     "is_fresh",
     "load_config",
+    "load_dotenv",
     "logger",
     "make_vision_describer",
     "parse_worker_message",

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import signal
 import sys
 
@@ -15,23 +16,35 @@ from .config import load_config
 from .server import start_server
 
 
-def _load_dotenv(path: str = ".env") -> None:
-    """Tiny .env loader (KEY=VALUE lines, # comments) so the CLI matches the
-    Node package's `node --env-file=.env` convenience without a dependency.
-    Existing environment variables are never overwritten."""
+def load_dotenv(path: str = ".env") -> None:
+    """Tiny .env loader so the CLI matches the Node package's
+    `node --env-file=.env` convenience without a dependency. Supports
+    `KEY=VALUE`, an optional `export ` prefix (files shared with `source`),
+    quoted values, and inline ` # comments` on unquoted values. Single-line
+    values only. Existing environment variables are never overwritten."""
     try:
         with open(path, encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line or line.startswith("#") or "=" not in line:
                     continue
+                if line.startswith("export "):
+                    line = line[len("export ") :].lstrip()
                 key, _, value = line.partition("=")
                 key = key.strip()
-                value = value.strip().strip('"').strip("'")
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                    value = value[1:-1]  # quoted: keep content verbatim (incl. '#')
+                else:
+                    value = re.sub(r"\s+#.*$", "", value).strip()
                 if key and key not in os.environ:
                     os.environ[key] = value
     except OSError:
         pass  # no .env is fine
+
+
+# backwards-compatible alias (pre-0.1 name)
+_load_dotenv = load_dotenv
 
 
 async def _run() -> None:
@@ -52,7 +65,7 @@ async def _run() -> None:
 
 
 def main() -> None:
-    _load_dotenv()
+    load_dotenv()
     try:
         asyncio.run(_run())
     except ValueError as err:  # config errors (missing/invalid env vars)

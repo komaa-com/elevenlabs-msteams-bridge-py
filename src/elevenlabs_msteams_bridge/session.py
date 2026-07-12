@@ -226,7 +226,9 @@ class CallSession:
                     else f"There are {int(count)} human participants on this call. Stay quiet unless directly addressed."
                 )
         elif mtype == "dtmf":
-            self._push_context(f'The caller pressed the "{msg.get("digit")}" key on their keypad.')
+            digit = msg.get("digit")
+            if isinstance(digit, str) and digit:
+                self._push_context(f'The caller pressed the "{digit}" key on their keypad.')
         elif mtype == "recording.status":
             self._recording_active = msg.get("status") == "active"
             self.log.info(f"recording.status = {msg.get('status')}")
@@ -403,7 +405,9 @@ class CallSession:
                 self.log.debug(f"dropping agent audio {event_id} (deterministic goodbye playing)")
                 return
             if event_id <= self._last_interrupt_event_id:
-                self.log.debug(f"dropping ghost audio event {event_id} (interrupted at {self._last_interrupt_event_id})")
+                self.log.debug(
+                    f"dropping ghost audio event {event_id} (interrupted at {self._last_interrupt_event_id})"
+                )
                 return
             self._emit_audio_to_worker(ev["audio_base_64"])
         elif mtype == "interruption":
@@ -430,8 +434,10 @@ class CallSession:
                 self.log.info(str(mtype), msg)
         elif mtype == "client_tool_call":
             call = msg.get("client_tool_call")
-            if not isinstance(call, dict) or not isinstance(call.get("tool_name"), str) or not isinstance(
-                call.get("tool_call_id"), str
+            if (
+                not isinstance(call, dict)
+                or not isinstance(call.get("tool_name"), str)
+                or not isinstance(call.get("tool_call_id"), str)
             ):
                 self.log.warn("EL client_tool_call missing tool_name/tool_call_id; dropping")
                 return
@@ -493,17 +499,24 @@ class CallSession:
                 data_base64 = base64.b64encode(img_bytes).decode("ascii")
             if not data_base64 or not mime or not _IMAGE_MIME_RE.match(mime):
                 raise ValueError("show_image needs {dataBase64, mime} or {url} resolving to image/jpeg or image/png")
-            self._send_to_worker(
+            delivered = self._send_to_worker(
                 {
                     "type": "display.image",
                     "dataBase64": data_base64,
                     "mime": mime,
-                    "durationMs": params.get("durationMs") if isinstance(params.get("durationMs"), (int, float)) else None,
+                    "durationMs": params.get("durationMs")
+                    if isinstance(params.get("durationMs"), (int, float))
+                    else None,
                     "mode": params.get("mode") if isinstance(params.get("mode"), str) else None,
                     "ts": 0,
                     "caption": params.get("caption") if isinstance(params.get("caption"), str) else None,
                 }
             )
+            # Tell the agent the truth: a frame dropped under backpressure was
+            # NOT shown - claiming success would leave it talking about an image
+            # the caller never saw.
+            if not delivered:
+                raise ValueError("image could not be delivered (worker connection is congested); try again")
             if self.el is not None:
                 self.el.send_client_tool_result(tool_call_id, "image is being shown to the caller", False)
         except Exception as err:
@@ -565,11 +578,14 @@ class CallSession:
                 if frame.get("source") == "screenshare"
                 else f"camera of {frame.get('participantName') or 'the caller'}"
             )
+            mime = frame.get("mime")
+            if not isinstance(mime, str) or not mime:
+                raise ValueError("video frame carries no mime type")
             try:
                 frame_bytes = base64.b64decode(frame.get("dataBase64") or "", validate=False)
             except (binascii.Error, ValueError) as err:
                 raise ValueError(f"video frame is not valid base64: {err}") from None
-            await el.attach_image(frame_bytes, str(frame.get("mime")), f"[live Teams frame: {who}] {question}")
+            await el.attach_image(frame_bytes, mime, f"[live Teams frame: {who}] {question}")
             if self.el is not None:
                 self.el.send_client_tool_result(
                     tool_call_id, "the frame was attached to the conversation - answer based on it", False
@@ -616,7 +632,15 @@ class CallSession:
                 for off in range(0, len(pcm), PCM16K_FRAME_BYTES):
                     chunk = pcm[off : off + PCM16K_FRAME_BYTES]
                     self._emit_audio_to_worker(base64.b64encode(chunk).decode("ascii"))
-                return pcm16k_bytes_to_ms(len(pcm))
+                played_ms = pcm16k_bytes_to_ms(len(pcm))
+                # Unmute once the goodbye has played out. Normally the call ends
+                # first (time-limit teardown, or the worker hangs up after its
+                # assistant.say) - but if a peer fails to tear down, the agent
+                # must not stay silently muted for the rest of the call.
+                asyncio.get_running_loop().call_later(
+                    (played_ms + 250) / 1000, lambda: setattr(self, "_mute_agent_audio", False)
+                )
+                return played_ms
             except Exception as err:
                 self._mute_agent_audio = False  # fallback: the agent must stay audible
                 self.log.warn(f"goodbye TTS failed ({err}); falling back to user_message")
@@ -642,9 +666,11 @@ class CallSession:
         metric_inc("bridge_frames_to_worker_total")
         self._send_to_worker(frame)
 
-    def _send_to_worker(self, msg: dict[str, Any]) -> None:
+    def _send_to_worker(self, msg: dict[str, Any]) -> bool:
+        """Send one frame; False when the frame was dropped (socket closed or
+        realtime backpressure), True when it was queued for delivery."""
         if not self.worker.is_open:
-            return
+            return False
         # Backpressure guard: if the worker stalls, the outbound buffer grows
         # unbounded (50 audio.frames/s) and leaks memory. Above the cap, drop
         # this frame rather than queue it - audio is realtime, a stale frame is
@@ -665,8 +691,9 @@ class CallSession:
                 )
                 self._last_backpressure_warn_ms = now
                 self._dropped_frames = 0
-            return
+            return False
         self.worker.send_text(json.dumps(msg))
+        return True
 
     def shutdown(self, reason: str) -> None:
         """Graceful external shutdown (e.g. SIGTERM drain): tell the worker the

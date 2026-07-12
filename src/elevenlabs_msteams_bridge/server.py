@@ -254,7 +254,10 @@ class BridgeServer:
             else:
                 self._per_ip[ip] = n
 
-        ws = web.WebSocketResponse(max_msg_size=MAX_INBOUND_PAYLOAD_BYTES, heartbeat=None)
+        # WS-level heartbeat (30 s): detects a half-open TCP peer at the protocol
+        # layer long before the 90 s application idle watchdog - important
+        # because a dead callId 409-blocks every reconnect until it clears.
+        ws = web.WebSocketResponse(max_msg_size=MAX_INBOUND_PAYLOAD_BYTES, heartbeat=30.0)
         try:
             await ws.prepare(request)
         except Exception:
@@ -284,7 +287,9 @@ class BridgeServer:
 
         def pre_start_check() -> None:
             if not session.has_started and not session.closed:
-                log.warn(f"call {call_id[:12]}... sent no session.start in {int(self._pre_start_timeout_s * 1000)}ms; closing")
+                log.warn(
+                    f"call {call_id[:12]}... sent no session.start in {int(self._pre_start_timeout_s * 1000)}ms; closing"
+                )
                 session.end_call("no session.start")
 
         pre_start_timer = loop.call_later(self._pre_start_timeout_s, pre_start_check)

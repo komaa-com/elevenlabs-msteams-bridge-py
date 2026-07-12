@@ -9,14 +9,17 @@ from datetime import datetime, timezone
 
 _ORDER = {"debug": 10, "info": 20, "warn": 30, "error": 40}
 
-# Fall back to "info" for an unset OR invalid LOG_LEVEL. Without the membership
-# check, a typo (e.g. LOG_LEVEL=verbose) would otherwise emit every level.
-_requested = os.environ.get("LOG_LEVEL", "").strip().lower()
-_MIN_LEVEL = _requested if _requested in _ORDER else "info"
+
+def _min_level() -> str:
+    """Read LOG_LEVEL per emit (cheap) so .env loading and runtime changes take
+    effect. Falls back to "info" for an unset OR invalid value - without the
+    membership check, a typo (e.g. LOG_LEVEL=verbose) would emit every level."""
+    requested = os.environ.get("LOG_LEVEL", "").strip().lower()
+    return requested if requested in _ORDER else "info"
 
 
 def _emit(level: str, scope: str, msg: str, extra: object = None) -> None:
-    if _ORDER[level] < _ORDER[_MIN_LEVEL]:
+    if _ORDER[level] < _ORDER[_min_level()]:
         return
     ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     tail = "" if extra is None else f" {json.dumps(extra, default=str)}"
