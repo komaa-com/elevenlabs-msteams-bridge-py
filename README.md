@@ -1,4 +1,12 @@
-# elevenlabs-msteams-bridge (Python)
+# Microsoft Teams Bridge for ElevenLabs Agents (Python)
+
+[![CI](https://github.com/komaa-com/elevenlabs-msteams-bridge-py/actions/workflows/ci.yml/badge.svg)](https://github.com/komaa-com/elevenlabs-msteams-bridge-py/actions/workflows/ci.yml)
+[![PyPI version](https://img.shields.io/pypi/v/elevenlabs-msteams-bridge.svg)](https://pypi.org/project/elevenlabs-msteams-bridge/)
+[![Python versions](https://img.shields.io/pypi/pyversions/elevenlabs-msteams-bridge.svg)](https://pypi.org/project/elevenlabs-msteams-bridge/)
+[![docs](https://img.shields.io/badge/docs-komaa--com.github.io-2563eb.svg)](https://komaa-com.github.io/elevenlabs-msteams-bridge-py/)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://komaa-com.github.io/elevenlabs-msteams-bridge-py/contributing/)
 
 Bridge **Microsoft Teams voice/video calls** to an **ElevenLabs Agent**.
 
