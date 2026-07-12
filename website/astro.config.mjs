@@ -1,0 +1,39 @@
+// Docs site for elevenlabs-msteams-bridge (Python), published to GitHub Pages by .github/workflows/docs.yml.
+import { defineConfig } from "astro/config";
+import starlight from "@astrojs/starlight";
+import mermaid from "astro-mermaid";
+
+export default defineConfig({
+  site: "https://komaa-com.github.io",
+  base: "/elevenlabs-msteams-bridge-py",
+  integrations: [
+    // Client-side Mermaid rendering (theme-aware, offline). Must come BEFORE starlight.
+    mermaid({ theme: "default", autoTheme: true }),
+    starlight({
+      title: "Microsoft Teams Bridge for ElevenLabs Agents (Python)",
+      description:
+        "Put an ElevenLabs Agent on a real Microsoft Teams call from Python: verbatim PCM16k audio relay, barge-in, vision on demand, and call governors, connected through the StandIn media bridge.",
+      social: [
+        {
+          icon: "github",
+          label: "GitHub",
+          href: "https://github.com/komaa-com/elevenlabs-msteams-bridge-py",
+        },
+      ],
+      sidebar: [
+        { label: "Overview", link: "/" },
+        { label: "Getting Started", link: "/getting-started/" },
+        { label: "Run the Example", link: "/example/" },
+        { label: "Connecting to StandIn", link: "/connecting-to-standin/" },
+        { label: "Architecture", link: "/architecture/" },
+        { label: "Configuration Reference", link: "/configuration-reference/" },
+        { label: "Library API", link: "/library-api/" },
+        { label: "Wire Protocol", link: "/wire-protocol/" },
+        { label: "Vision and Tools", link: "/vision-and-tools/" },
+        { label: "Governors and Privacy", link: "/governors-and-privacy/" },
+        { label: "Troubleshooting", link: "/troubleshooting/" },
+        { label: "Contributing", link: "/contributing/" },
+      ],
+    }),
+  ],
+});

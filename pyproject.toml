@@ -35,8 +35,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://komaa-com.github.io/elevenlabs-msteams-bridge/"
-Documentation = "https://docs.komaa.com/elevenlabs/installation"
+Homepage = "https://komaa-com.github.io/elevenlabs-msteams-bridge-py/"
+Documentation = "https://komaa-com.github.io/elevenlabs-msteams-bridge-py/"
+"StandIn docs" = "https://docs.komaa.com/elevenlabs/installation"
 Repository = "https://github.com/komaa-com/elevenlabs-msteams-bridge-py"
 Issues = "https://github.com/komaa-com/elevenlabs-msteams-bridge-py/issues"
 

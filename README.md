@@ -21,7 +21,11 @@ Agent WebSocket on the other:
   fetches, dead-peer detection, graceful SIGTERM drain, Prometheus `/metrics`.
 
 [StandIn](https://standin.komaa.com) is the hosted media bridge that joins the Teams call and dials
-this bridge - you run no Teams media stack yourself. Docs: [docs.komaa.com](https://docs.komaa.com/elevenlabs/installation).
+this bridge - you run no Teams media stack yourself.
+
+**Documentation**: [komaa-com.github.io/elevenlabs-msteams-bridge-py](https://komaa-com.github.io/elevenlabs-msteams-bridge-py/)
+(getting started, example walkthrough, configuration and library reference, wire protocol).
+Teams/StandIn setup lives at [docs.komaa.com](https://docs.komaa.com/elevenlabs/installation).
 
 ## Install
 
