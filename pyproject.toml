@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "elevenlabs-msteams-bridge"
-version = "0.2.2"
+version = "0.2.3"
 description = "Bridge Microsoft Teams voice/video calls to an ElevenLabs Agent. Terminates the StandIn media bridge wire protocol on one side and the ElevenLabs Agent WebSocket on the other. No transcoding: PCM 16k verbatim both ways, barge-in, on-demand vision, call governors."
 readme = "README.md"
 license = "MIT"
-authors = [{ name = "Alaaeldin Elhenawy", email = "alaamh@outlook.com" }]
+authors = [{ name = "Komaa DigiTech" }]
 requires-python = ">=3.10"
 dependencies = ["aiohttp>=3.9,<4"]
 keywords = [
