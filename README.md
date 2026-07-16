@@ -15,7 +15,7 @@ Bridge **Microsoft Teams voice/video calls** to an **ElevenLabs Agent**.
 
 This is the Python sibling of [`@komaa/elevenlabs-msteams-bridge`](https://www.npmjs.com/package/@komaa/elevenlabs-msteams-bridge)
 (Node.js) - same wire contract, same environment variables, drop-in interchangeable behind the same
-`.env` file. It terminates the StandIn media bridge wire protocol on one side and the ElevenLabs
+`.env` file. The Node and Python packages version independently, so a version-number gap between them is expected; both implement the same StandIn wire protocol and interoperate with the hosted service identically. It terminates the StandIn media bridge wire protocol on one side and the ElevenLabs
 Agent WebSocket on the other:
 
 - **No transcoding**: both sides speak base64 PCM 16 kHz mono - the hot path is copy-only.
