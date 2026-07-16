@@ -327,7 +327,7 @@ async def test_dtmf_requires_string_digit():
     session.end_call("test-done")
 
 
-async def test_show_image_reports_error_when_dropped_under_backpressure():
+async def test_show_image_is_undroppable_under_backpressure():
     session, worker, agent, connector = make_session()
     session.handle_worker_message(start_msg())
     await settle()
@@ -343,9 +343,12 @@ async def test_show_image_reports_error_when_dropped_under_backpressure():
         }
     )
     await settle()
+    # display.image is a ONE-SHOT the agent is told succeeded, so it is UNDROPPABLE:
+    # even under worker backpressure it is delivered (unlike audio.frame), so the
+    # agent's "image is being shown" belief matches what the caller sees (BRIDGE-4).
+    assert worker.of_type("display.image"), "display.image must be delivered even under backpressure"
     results = [m for k, m in agent.messages if k == "tool_result"]
-    # the agent must NOT be told the image was shown when the frame was dropped
-    assert results and results[-1][2] is True and "could not be delivered" in results[-1][1]
+    assert results and results[-1][2] is False and "being shown to the caller" in results[-1][1]
     session.end_call("test-done")
 
 

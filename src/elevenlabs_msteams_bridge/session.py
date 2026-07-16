@@ -631,7 +631,9 @@ class CallSession:
                 # re-aligning a giant chunk.
                 for off in range(0, len(pcm), PCM16K_FRAME_BYTES):
                     chunk = pcm[off : off + PCM16K_FRAME_BYTES]
-                    self._emit_audio_to_worker(base64.b64encode(chunk).decode("ascii"))
+                    # undroppable: the goodbye is the deterministic compliance line at
+                    # call-end; it must play even under worker backpressure (parity w/ deepgram).
+                    self._emit_audio_to_worker(base64.b64encode(chunk).decode("ascii"), undroppable=True)
                 played_ms = pcm16k_bytes_to_ms(len(pcm))
                 # Unmute once the goodbye has played out. Normally the call ends
                 # first (time-limit teardown, or the worker hangs up after its
@@ -652,7 +654,7 @@ class CallSession:
 
     # ---- plumbing ----
 
-    def _emit_audio_to_worker(self, base64_pcm: str) -> None:
+    def _emit_audio_to_worker(self, base64_pcm: str, undroppable: bool = False) -> None:
         frame = {
             "type": "audio.frame",
             "seq": self._out_seq,
@@ -665,21 +667,22 @@ class CallSession:
         # base64 where arithmetic on the string length drifts)
         self._out_timestamp_ms += pcm16k_bytes_to_ms(len(base64.b64decode(base64_pcm)))
         metric_inc("bridge_frames_to_worker_total")
-        self._send_to_worker(frame)
+        self._send_to_worker(frame, undroppable)
 
-    def _send_to_worker(self, msg: dict[str, Any]) -> bool:
+    def _send_to_worker(self, msg: dict[str, Any], undroppable: bool = False) -> bool:
         """Send one frame; False when the frame was dropped (socket closed or
         realtime backpressure), True when it was queued for delivery."""
         if not self.worker.is_open:
             return False
         # Backpressure guard: if the worker stalls, the outbound buffer grows
         # unbounded (50 audio.frames/s) and leaks memory. Above the cap, drop
-        # this frame rather than queue it - audio is realtime, a stale frame is
-        # worthless. ONLY the bulky realtime types are droppable: control frames
-        # (assistant.cancel, session.end, pong, expression) are tiny and
-        # semantically load-bearing - a stalled-then-recovered worker must not
-        # miss a barge-in cancel or a hangup.
-        droppable = msg.get("type") in ("audio.frame", "display.image")
+        # this frame rather than queue it. ONLY the continuous realtime audio.frame
+        # is droppable. display.image is a ONE-SHOT the agent is told succeeded, so
+        # dropping it desyncs the agent's belief from what the caller sees; control
+        # frames (assistant.cancel, session.end, pong, expression) are tiny and
+        # load-bearing; and the deterministic goodbye TTS passes undroppable so a
+        # backpressured call-end still plays the compliance line.
+        droppable = msg.get("type") == "audio.frame" and not undroppable
         if droppable and self.worker.buffered_bytes > MAX_OUTBOUND_BUFFER_BYTES:
             self._dropped_frames += 1
             metric_inc("bridge_frames_dropped_total")
