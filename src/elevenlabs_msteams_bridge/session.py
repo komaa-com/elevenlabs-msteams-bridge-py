@@ -56,6 +56,13 @@ DEFAULT_WORKER_IDLE_TIMEOUT_MS = 90_000
 # expressed in base64 characters (4 chars per 3 bytes).
 MAX_INLINE_IMAGE_B64_CHARS = -(-MAX_IMAGE_BYTES // 3) * 4
 
+# Length caps on agent-supplied control-frame strings. expression is undroppable,
+# so an unbounded emotion would bypass the outbound memory bound; caption/mode are
+# bounded for the same reason. Mirrors OpenAI/Deepgram.
+MAX_EMOTION_CHARS = 64
+MAX_CAPTION_CHARS = 500
+MAX_MODE_CHARS = 32
+
 _IMAGE_MIME_RE = re.compile(r"^image/(jpeg|png)$")
 
 
@@ -462,10 +469,16 @@ class CallSession:
             self.log.info("agent requested end_call")
             self.end_call("agent-ended-call")
         elif tool == "express":
-            emotion = params.get("emotion") if isinstance(params.get("emotion"), str) else ""
+            emotion = params.get("emotion").strip() if isinstance(params.get("emotion"), str) else ""
             if not emotion:
                 if self.el is not None:
                     self.el.send_client_tool_result(tool_call_id, "express requires an 'emotion' parameter", True)
+                return
+            if len(emotion) > MAX_EMOTION_CHARS:
+                if self.el is not None:
+                    self.el.send_client_tool_result(
+                        tool_call_id, f"express: 'emotion' must be at most {MAX_EMOTION_CHARS} characters", True
+                    )
                 return
             self._send_to_worker({"type": "expression", "emotion": emotion})
             if self.el is not None:
@@ -507,9 +520,11 @@ class CallSession:
                     "durationMs": params.get("durationMs")
                     if isinstance(params.get("durationMs"), (int, float))
                     else None,
-                    "mode": params.get("mode") if isinstance(params.get("mode"), str) else None,
+                    "mode": params.get("mode")[:MAX_MODE_CHARS] if isinstance(params.get("mode"), str) else None,
                     "ts": 0,
-                    "caption": params.get("caption") if isinstance(params.get("caption"), str) else None,
+                    "caption": params.get("caption")[:MAX_CAPTION_CHARS]
+                    if isinstance(params.get("caption"), str)
+                    else None,
                 }
             )
             # Tell the agent the truth: a frame dropped under backpressure was

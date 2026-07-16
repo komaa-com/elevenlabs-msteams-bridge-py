@@ -154,6 +154,23 @@ async def test_express_tool_maps_to_expression():
     session.end_call("test-done")
 
 
+async def test_express_rejects_overlong_emotion():
+    # BRIDGE-6: an over-long emotion is rejected (tool error) and emits no expression.
+    session, worker, agent, connector = make_session()
+    session.handle_worker_message(start_msg())
+    await settle()
+    connector.handlers.on_message(
+        {
+            "type": "client_tool_call",
+            "client_tool_call": {"tool_name": "express", "tool_call_id": "t2b", "parameters": {"emotion": "x" * 200}},
+        }
+    )
+    assert worker.of_type("expression") == []
+    results = [m for k, m in agent.messages if k == "tool_result"]
+    assert results and results[-1][2] is True  # is_error
+    session.end_call("test-done")
+
+
 async def test_unknown_tool_reports_error():
     session, worker, agent, connector = make_session()
     session.handle_worker_message(start_msg())
